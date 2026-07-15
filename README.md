@@ -166,3 +166,11 @@ renormalization.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## macOS: warm cross-builds for Mac apps
+
+wt needs Linux and ZFS, but the workflow it enables — parallel sandboxes with warm build
+caches — works for macOS apps too: run wt inside a lightweight Linux VM on the Mac,
+cross-compile with cargo-zigbuild against the host's own SDK, and let a small host agent sign
+and relaunch each build the moment it lands. Edit→running-app in under two seconds, measured.
+See [macos/README.md](macos/README.md).
