@@ -1,0 +1,54 @@
+# Lima template for the wt macOS cross-build VM. Start it via setup-host.sh, which injects two
+# host-specific mounts with --set: this repo at /wt-src and the host's Command Line Tools SDK
+# dir at /host-sdks (both read-only).
+#
+# LICENSING: the provision script copies the host's macOS SDK to /opt/MacOSX.sdk. That copy is
+# licensed to THIS machine's Xcode/CLT install — never publish or share a VM image built from
+# this template with the SDK inside.
+minimumLimaVersion: 2.0.0
+base:
+- template:_images/ubuntu-lts
+vmType: vz
+mountType: virtiofs
+cpus: 6
+memory: 12GiB
+disk: 40GiB
+mounts:
+  - location: "~/wt-export"
+    mountPoint: /export
+    writable: true
+additionalDisks:
+  # Created by setup-host.sh (limactl disk create wtpool). format: false is load-bearing —
+  # the provision script makes it a zpool; Lima's default would put ext4 on it first.
+  - name: wtpool
+    format: false
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+      export DEBIAN_FRONTEND=noninteractive
+      command -v zfs >/dev/null 2>&1 || {
+        apt-get update
+        apt-get install -y zfsutils-linux rsync build-essential pkg-config git python3-pip curl
+      }
+      modprobe zfs
+      # SDK injection, idempotent on every boot. -L flattens symlinks, and Ruby.framework's
+      # are self-referential — without the exclude, rsync loops until it dies. /host-sdks must
+      # be the CLT SDKs dir: the 26.x Xcode SDK's .tbd stubs dropped plain arm64-macos
+      # (arm64e only) and zig's strict linker fails on every objc/AppKit symbol.
+      mkdir -p /opt/MacOSX.sdk
+      rsync -aL --delete --exclude=Ruby.framework /host-sdks/MacOSX.sdk/ /opt/MacOSX.sdk/
+      # zpool on the raw attached disk: first boot creates, later boots import. The blkid
+      # guard keeps a mis-attached, already-formatted disk from being eaten.
+      if ! zpool list wt >/dev/null 2>&1; then
+        if ! zpool import wt 2>/dev/null; then
+          DEV=/dev/vdb
+          if blkid "$DEV" >/dev/null 2>&1; then
+            echo "refusing zpool create: $DEV already has a filesystem signature" >&2
+            exit 1
+          fi
+          zpool create -o ashift=12 wt "$DEV"
+        fi
+      fi
+      zfs list wt/proj >/dev/null 2>&1 || zfs create -o mountpoint=none wt/proj
