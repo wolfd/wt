@@ -107,8 +107,13 @@ non-interactive git anyway.
 ### A second project in the same guest
 
 `~/.config/wt/config` belongs to the first project. Each additional repo commits its own
-`.config/wt.conf` (same minimal three lines as above) and every wt command for it runs
-with the config named explicitly:
+`.config/wt.conf` (same minimal three lines as above, usually written with a literal
+`$HOME` so the file is machine-independent). One trap follows from that: run the one-shot
+migration with the checkout path as the argument —
+`sudo WT_CONFIG=$HOME/repo/.config/wt.conf WT_DS_SRC=... WT_DS_PARENT=... /wt-src/host-zfs-setup.sh -y $HOME/repo`
+— because the script sources the config as root, where `$HOME` is `/root`; the argument
+overrides it. Afterwards every wt command (running as you, where `$HOME` is right) just
+needs the config named explicitly:
 
 ```sh
 export WT_CONFIG=$HOME/dev/other/.config/wt.conf   # per shell, or use a direnv/alias
