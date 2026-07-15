@@ -46,7 +46,10 @@ macos/host/install-agent.sh             # launchd agent: relaunch on every ship
 ```
 
 `setup-host.sh` knobs (env): `WT_MAC_VM` (instance name, default `wt`), `WT_MAC_SDKS` (SDK dir,
-default the CLT path), `WT_MAC_DISK_SIZE` (zpool disk, default `80GiB`). The agent scripts take
+default the CLT path), `WT_MAC_DISK_SIZE` (zpool disk, default `80GiB`), `WT_MAC_SSH_DIR`
+(host directory with ssh keys, e.g. `~/.ssh`, mounted read-only at `/host-ssh` for cloning
+private repos; default off — for an existing VM, setup-host.sh prints the `limactl edit`
+retrofit command instead). The agent scripts take
 `WT_MAC_EXPORT` (default `~/wt-export`) — leave it at the default unless you also edit the
 `~/wt-export` mount in `lima.yaml` to match; it exists mainly for the launchd plist rendering
 and tests, not as a general relocation knob. Prefer a visible terminal tab over launchd?
@@ -60,13 +63,17 @@ git clone <your-app> ~/dev/app && cd ~/dev/app
 mkdir -p ~/.config/wt
 cat > ~/.config/wt/config <<EOF
 WT_CANONICAL=$HOME/dev/app
-WT_DS_SRC=wt/proj/canonical
-WT_DS_PARENT=wt/proj/clones
 WT_HOME=$HOME/dev/app-wt
 WT_HOOK_ENTER=/usr/local/share/wt-hooks/mac-env.sh
 EOF
-sudo /wt-src/host-zfs-setup.sh                 # migrate the checkout into a dataset; see -h
+sudo WT_DS_SRC=wt/proj/app-src WT_DS_PARENT=wt/proj/app-wt \
+     /wt-src/host-zfs-setup.sh          # migrate the checkout into a dataset; see -h
 ```
+
+`WT_DS_SRC`/`WT_DS_PARENT` appear only on the setup call: the guest home is ext4, so
+host-zfs-setup.sh's own derivation has nothing to read there — but after migration both
+paths are ZFS mounts and `wt` derives the datasets at runtime, so the config file never
+names them.
 
 Copy `/wt-src/macos/example/ship-mac.sh` into your repo (edit the `SHIP_*` defaults) and
 `/wt-src/macos/example/Info.plist` to `packaging/Info.plist` (edit names/identifier). Then:
@@ -80,6 +87,36 @@ ls /export/logs/crashes/           # .ips crash reports swept back per app
 
 The enter hook feeds every sandbox session `SDKROOT=/opt/MacOSX.sdk` and
 `MACOSX_DEPLOYMENT_TARGET=13.0`; `cargo zigbuild --target aarch64-apple-darwin` does the rest.
+
+### Private repos
+
+Run `WT_MAC_SSH_DIR=~/.ssh macos/setup-host.sh` so the guest sees your keys read-only at
+`/host-ssh` (for an existing VM it prints the `limactl edit` retrofit instead). Then:
+
+```sh
+GIT_SSH_COMMAND='ssh -i /host-ssh/id_ed25519 -o IdentitiesOnly=yes' \
+  git clone git@github.com:you/private-repo.git ~/dev/private-repo
+cd ~/dev/private-repo
+git config core.sshCommand 'ssh -i /host-ssh/id_ed25519 -o IdentitiesOnly=yes'
+```
+
+The second line makes plain `git fetch`/`pull`/`push` work from then on. Point at a plain
+file key: agent sockets don't cross virtiofs, and hardware-backed agents (Secretive) hang
+non-interactive git anyway.
+
+### A second project in the same guest
+
+`~/.config/wt/config` belongs to the first project. Each additional repo commits its own
+`.config/wt.conf` (same minimal three lines as above) and every wt command for it runs
+with the config named explicitly:
+
+```sh
+export WT_CONFIG=$HOME/dev/other/.config/wt.conf   # per shell, or use a direnv/alias
+wt new t1 && wt enter t1
+```
+
+Forgetting the export makes wt silently operate on the first project — check `wt status`
+when in doubt. wt's sudo re-exec preserves `WT_CONFIG` (explicit `--preserve-env` list).
 
 ## Gotchas we already paid for
 
