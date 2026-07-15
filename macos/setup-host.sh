@@ -34,6 +34,12 @@ else
     "$SELF/lima.yaml"
 fi
 
+# Lima downgrades a failed provision script to a warning and reports the boot as READY, so a
+# broken zpool would sail through silently. Probe the one thing everything downstream needs.
+limactl shell "$VM" -- zpool list wt >/dev/null 2>&1 \
+  || { echo "VM is up but zpool 'wt' is missing — the provision failed; inspect it with:" >&2
+       echo "  limactl shell $VM -- sudo cat /var/log/cloud-init-output.log" >&2; exit 1; }
+
 echo
 echo "VM '$VM' is up. Next:"
 echo "  limactl shell $VM -- bash /wt-src/macos/setup-guest.sh"

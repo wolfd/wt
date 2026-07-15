@@ -41,8 +41,13 @@ provision:
       rsync -aL --delete --exclude=Ruby.framework /host-sdks/MacOSX.sdk/ /opt/MacOSX.sdk/
       # zpool on the raw attached disk: first boot creates, later boots import. The blkid
       # guard keeps a mis-attached, already-formatted disk from being eaten.
+      #
+      # import -f: every VM rebuild gets a fresh hostid, so a pool carried over on the kept
+      # disk is always "last accessed by another system" and a plain import refuses. -f is
+      # safe here — Lima attaches a disk to at most one instance, so no other system can
+      # actually be using it.
       if ! zpool list wt >/dev/null 2>&1; then
-        if ! zpool import wt 2>/dev/null; then
+        if ! zpool import -f wt 2>/dev/null; then
           DEV=/dev/vdb
           if blkid "$DEV" >/dev/null 2>&1; then
             echo "refusing zpool create: $DEV already has a filesystem signature" >&2
