@@ -47,7 +47,9 @@ macos/host/install-agent.sh             # launchd agent: relaunch on every ship
 
 `setup-host.sh` knobs (env): `WT_MAC_VM` (instance name, default `wt`), `WT_MAC_SDKS` (SDK dir,
 default the CLT path), `WT_MAC_DISK_SIZE` (zpool disk, default `80GiB`). The agent scripts take
-`WT_MAC_EXPORT` (default `~/wt-export`). Prefer a visible terminal tab over launchd?
+`WT_MAC_EXPORT` (default `~/wt-export`) — leave it at the default unless you also edit the
+`~/wt-export` mount in `lima.yaml` to match; it exists mainly for the launchd plist rendering
+and tests, not as a general relocation knob. Prefer a visible terminal tab over launchd?
 `macos/host/watch.sh` is the same loop in the foreground.
 
 ## Per project (inside the VM)
@@ -55,7 +57,6 @@ default the CLT path), `WT_MAC_DISK_SIZE` (zpool disk, default `80GiB`). The age
 ```sh
 limactl shell wt
 git clone <your-app> ~/dev/app && cd ~/dev/app
-sudo /usr/local/bin/host-zfs-setup.sh          # migrate the checkout into a dataset; see -h
 mkdir -p ~/.config/wt
 cat > ~/.config/wt/config <<EOF
 WT_CANONICAL=$HOME/dev/app
@@ -64,10 +65,11 @@ WT_DS_PARENT=wt/proj/clones
 WT_HOME=$HOME/dev/app-wt
 WT_HOOK_ENTER=/usr/local/share/wt-hooks/mac-env.sh
 EOF
+sudo /wt-src/host-zfs-setup.sh                 # migrate the checkout into a dataset; see -h
 ```
 
-Copy `macos/example/ship-mac.sh` into your repo (edit the `SHIP_*` defaults) and
-`macos/example/Info.plist` to `packaging/Info.plist` (edit names/identifier). Then:
+Copy `/wt-src/macos/example/ship-mac.sh` into your repo (edit the `SHIP_*` defaults) and
+`/wt-src/macos/example/Info.plist` to `packaging/Info.plist` (edit names/identifier). Then:
 
 ```sh
 wt new t1 && wt enter t1
@@ -103,6 +105,7 @@ The enter hook feeds every sandbox session `SDKROOT=/opt/MacOSX.sdk` and
 
 ```sh
 launchctl bootout gui/$(id -u)/dev.wt.mac-runner   # remove the agent
+rm -f ~/Library/LaunchAgents/dev.wt.mac-runner.plist  # else launchd re-bootstraps it at next login
 limactl stop wt && limactl delete wt               # the VM (zpool disk survives)
 limactl disk delete wtpool                         # ...and the sandboxes' pool
 rm -rf ~/wt-export

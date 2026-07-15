@@ -24,5 +24,5 @@ sudo install -D -m 0755 "$WT_SRC/macos/guest/mac-env.sh" /usr/local/share/wt-hoo
 
 echo
 echo "toolchain ready. Per project, see macos/README.md:"
-echo "  clone your repo, run host-zfs-setup.sh, point ~/.config/wt/config at it"
+echo "  clone your repo, point ~/.config/wt/config at it, then run /wt-src/host-zfs-setup.sh"
 echo "  (WT_HOOK_ENTER=/usr/local/share/wt-hooks/mac-env.sh)"

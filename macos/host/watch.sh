@@ -9,4 +9,6 @@ command -v fswatch >/dev/null 2>&1 \
 mkdir -p "$EXPORT/incoming"
 touch "$EXPORT/incoming/run.trigger"
 echo "watching $EXPORT/incoming/run.trigger" >&2
-fswatch -o "$EXPORT/incoming/run.trigger" | while read -r _; do "$SELF/run-latest.sh"; done
+# `|| true`: one codesign/relaunch failure must not end the watch loop under -e — the next ship
+# should still trigger a relaunch attempt.
+fswatch -o "$EXPORT/incoming/run.trigger" | while read -r _; do "$SELF/run-latest.sh" || true; done
