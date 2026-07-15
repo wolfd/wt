@@ -81,6 +81,31 @@ out=$(run_setup WT_MAC_SDKS="$T/empty-sdks" 2>&1); rc=$?
   && ok "a missing MacOSX.sdk fails and points at the Command Line Tools" \
   || no "missing SDK: rc=$rc out=$out"
 
+echo "== setup-host.sh: WT_MAC_SSH_DIR =="
+rm -f "$STATE/vm" "$STATE/disk"; : > "$LIMACTL_LOG"
+mkdir -p "$T/sshdir"
+run_setup WT_MAC_SDKS="$T/sdks" WT_MAC_SSH_DIR="$T/sshdir" >"$T/out3" 2>&1; rc=$?
+start=$(grep -m1 '^start ' "$LIMACTL_LOG" || true)
+[ "$rc" -eq 0 ] && grep -qF "\"location\": \"$T/sshdir\", \"mountPoint\": \"/host-ssh\", \"writable\": false" <<<"$start" \
+  && ok "WT_MAC_SSH_DIR injects a read-only /host-ssh mount on first start" \
+  || no "ssh mount missing or not read-only: $start"
+
+rm -f "$STATE/vm" "$STATE/disk"; : > "$LIMACTL_LOG"
+run_setup WT_MAC_SDKS="$T/sdks" >"$T/out4" 2>&1
+grep -q '/host-ssh' "$LIMACTL_LOG" \
+  && no "unset WT_MAC_SSH_DIR still injected /host-ssh" \
+  || ok "no knob, no /host-ssh mount"
+
+out=$(run_setup WT_MAC_SDKS="$T/sdks" WT_MAC_SSH_DIR="$T/sshdir" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && grep -q 'limactl edit' <<<"$out" && grep -qF "$T/sshdir" <<<"$out" \
+  && ok "existing VM + knob: succeeds and prints the limactl edit retrofit" \
+  || no "no retrofit hint for an existing VM: rc=$rc out=$out"
+
+out=$(run_setup WT_MAC_SDKS="$T/sdks" WT_MAC_SSH_DIR="$T/nope" 2>&1); rc=$?
+[ "$rc" -ne 0 ] && grep -q 'WT_MAC_SSH_DIR' <<<"$out" \
+  && ok "a non-directory WT_MAC_SSH_DIR fails and names the knob" \
+  || no "bad ssh dir: rc=$rc out=$out"
+
 # ---- host agent ---------------------------------------------------------------------------
 RUN="$DIR/../macos/host/run-latest.sh"
 AGENT="$DIR/../macos/host/install-agent.sh"
