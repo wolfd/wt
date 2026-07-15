@@ -30,17 +30,25 @@ re-cloned fresh inside the VM. The host checkout is never touched.
     first project; each additional repo commits `.config/wt.conf` and every wt command for
     it runs with `WT_CONFIG=<checkout>/.config/wt.conf` (wt's re-exec already preserves it
     through sudo-rs via the explicit `--preserve-env` list).
+  - Trim the per-project config example to the post-f38db30 minimal form (no `WT_DS_*` —
+    runtime derivation reads them off the mounts; note the ext4-home caveat that the
+    one-shot `host-zfs-setup.sh` call still names the datasets via env).
 
 ## 2. voxfall repo changes
 
-- **`.config/wt.conf`** (committed):
+- **`.config/wt.conf`** (committed) — minimal, leaning on upstream f38db30's implicit
+  dataset derivation (`wt` reads `WT_DS_SRC`/`WT_DS_PARENT` off the ZFS mounts of
+  `WT_CANONICAL`/`WT_HOME` at runtime, so the config never names them):
   ```sh
   WT_CANONICAL=$HOME/dev/voxfall
-  WT_DS_SRC=wt/proj/voxfall
-  WT_DS_PARENT=wt/proj/voxfall-clones
-  WT_HOME=$HOME/dev/voxfall-wt
+  WT_HOME=$HOME/dev/voxfall-wt   # not derivable: wt's default is ~/.local/share/wt
   WT_HOOK_ENTER=/usr/local/share/wt-hooks/mac-env.sh
   ```
+  The datasets follow f38db30's `-src`/`-wt` convention: `wt/proj/voxfall-src` and
+  `wt/proj/voxfall-wt`. They are named exactly once — as env on the one-shot
+  `host-zfs-setup.sh` call — because the guest's home is ext4, so the script's own
+  setup-time derivation (containing dataset of the checkout) has nothing to read there.
+  After migration both paths are ZFS mounts and runtime derivation covers everything.
 - **`scripts/ship-mac.sh`**: copy of `macos/example/ship-mac.sh` with voxfall defaults
   (`SHIP_APP=Voxfall`, `SHIP_BIN=app` — the `[[bin]]` in `crates/app/Cargo.toml`) and one
   real extension: rsync `crates/app/assets/` into `Voxfall.app/Contents/MacOS/assets`.
@@ -61,7 +69,9 @@ GIT_SSH_COMMAND='ssh -i /host-ssh/id_ed25519 -o IdentitiesOnly=yes' \
   git clone git@github.com:wolfd/voxfall.git ~/dev/voxfall
 cd ~/dev/voxfall && git config core.sshCommand 'ssh -i /host-ssh/id_ed25519 -o IdentitiesOnly=yes'
 sudo apt-get install -y libasound2-dev libudev-dev   # + anything the first build proves
-sudo WT_CONFIG=$HOME/dev/voxfall/.config/wt.conf /wt-src/host-zfs-setup.sh -y
+sudo WT_CONFIG=$HOME/dev/voxfall/.config/wt.conf \
+     WT_DS_SRC=wt/proj/voxfall-src WT_DS_PARENT=wt/proj/voxfall-wt \
+     /wt-src/host-zfs-setup.sh -y    # datasets named here once; ext4 home defeats setup-time derivation
 export WT_CONFIG=$HOME/dev/voxfall/.config/wt.conf
 wt new v1 && wt enter v1
 ```
