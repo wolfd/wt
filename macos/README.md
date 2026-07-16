@@ -142,6 +142,13 @@ when in doubt. wt's sudo re-exec preserves `WT_CONFIG` (explicit `--preserve-env
   either behavior changing.
 - `open -n --stdout <file> --stderr <file>` works with files on virtiofs, and the guest sees
   the output live. That is the entire log-feedback mechanism; there is no daemon.
+- The VM has no swap, and linking a big (Bevy-scale) debug binary with GNU ld can peak past
+  the whole 12 GiB — the OOM killer's `ld terminated with signal 9` looks like a compiler
+  bug but isn't. Give the guest a swapfile (`fallocate`/`mkswap`/`swapon` + fstab) and/or
+  cap the build with `cargo ... -j 2`.
+- If a repo stores assets in Git LFS, install `git-lfs` in the guest before cloning (or
+  `git lfs install && git lfs pull` after) — pointer files "work" until something actually
+  decodes them. LFS auth rides the same `/host-ssh` key via `git-lfs-authenticate`.
 
 ## Uninstall / teardown
 
