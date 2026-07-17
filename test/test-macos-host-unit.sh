@@ -318,6 +318,42 @@ grep -qi 'stale' <<<"$out" \
   && ok "vm-git: a remote whose sha differs from the cache is flagged stale" \
   || no "vm-git: stale cache not flagged: $out"
 
+echo "== vm-git.sh: fetch =="
+HOSTREPO="$T/host-side/boxddd-checkout"   # deliberately NOT named like the guest repo
+mkdir -p "$HOSTREPO"; git init -q "$HOSTREPO"
+gitq "$HOSTREPO" remote add origin https://example.invalid/stranded   # matches guest 'stranded'
+
+run_fetch() { env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" WT_MAC_GUEST_DEV="$GD" \
+                  bash -c "cd '$HOSTREPO' && bash '$VMGIT' fetch $*"; }
+
+out=$(run_fetch 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok "vm-git: fetch exits 0" || no "vm-git: fetch rc=$rc: $out"
+[ "$(gitq "$HOSTREPO" config --get remote.vm.url)" = "lima-wt:$GD/stranded" ] \
+  && ok "vm-git: fetch infers the guest repo from the origin URL, not the directory name" \
+  || no "vm-git: wrong vm url: $(gitq "$HOSTREPO" config --get remote.vm.url)"
+[ "$(gitq "$HOSTREPO" config --get remote.vm.fetch)" = "+refs/heads/*:refs/vm/stranded/*" ] \
+  && ok "vm-git: guest branches land under refs/vm/<project>/* and cannot collide with origin/*" \
+  || no "vm-git: wrong refspec: $(gitq "$HOSTREPO" config --get remote.vm.fetch)"
+grep -q 'ssh.config' <<<"$(gitq "$HOSTREPO" config --get core.sshCommand)" \
+  && ok "vm-git: core.sshCommand is pinned to lima's regenerated config (survives port changes)" \
+  || no "vm-git: core.sshCommand not set: $(gitq "$HOSTREPO" config --get core.sshCommand)"
+gitq "$HOSTREPO" rev-parse --verify refs/vm/stranded/main >/dev/null 2>&1 \
+  && ok "vm-git: the stranded commit actually landed on the host" \
+  || no "vm-git: refs/vm/stranded/main missing after fetch"
+gitq "$HOSTREPO" rev-parse --verify refs/heads/main >/dev/null 2>&1 \
+  && no "vm-git: fetch created a local branch (must only write refs/vm/*)" \
+  || ok "vm-git: fetch wrote no local branches"
+
+out=$(run_fetch 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok "vm-git: fetch is idempotent (a second run re-uses the vm remote)" \
+                || no "vm-git: second fetch failed: $out"
+
+out=$(env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" WT_MAC_GUEST_DEV="$GD" \
+      bash -c "cd '$T' && bash '$VMGIT' fetch" 2>&1); rc=$?
+[ "$rc" -ne 0 ] && grep -qi 'not a git repo' <<<"$out" \
+  && ok "vm-git: fetch outside a git repo fails and says so" \
+  || no "vm-git: fetch outside a repo: rc=$rc out=$out"
+
 echo
 echo "== results: $PASS passed, $FAIL failed =="
 [ "$FAIL" -eq 0 ]

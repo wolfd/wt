@@ -78,8 +78,47 @@ cmd_status() {
   [ "$found" -eq 1 ] || echo "nothing stranded — every guest commit is on a remote."
 }
 
+# Which guest repo pairs with the host repo we are standing in? Origin URL first — it pairs
+# correctly even when the two directories are named differently — then basename, then ask.
+infer_project() {
+  local survey=$1 origin
+  origin=$(git config --get remote.origin.url 2>/dev/null || true)
+  if [ -n "$origin" ]; then
+    local m; m=$(awk -v u="$origin" '$1=="U" && $3==u {print $2; exit}' "$survey")
+    [ -n "$m" ] && { echo "$m"; return 0; }
+  fi
+  local base; base=$(basename "$PWD")
+  awk -v r="$base" '$1=="U" && $2==r {print $2; exit}' "$survey"
+}
+
+cmd_fetch() {
+  git rev-parse --git-dir >/dev/null 2>&1 \
+    || { echo "not a git repo: $PWD — run this from the host checkout you want the work in" >&2; exit 1; }
+  local survey="$TMP/survey"
+  guest_survey > "$survey"
+
+  local project=${1:-}
+  [ -n "$project" ] || project=$(infer_project "$survey")
+  [ -n "$project" ] || { echo "cannot tell which guest repo this is — name it: $(basename "$0") fetch <project>" >&2
+                         awk '$1=="U" {print "  " $2}' "$survey" >&2; exit 1; }
+  awk -v r="$project" '$1=="U" && $2==r {f=1} END {exit !f}' "$survey" \
+    || { echo "no guest repo '$project' under the guest's dev dir" >&2; exit 1; }
+
+  # Self-configuring: first run and every run are the same command. The URL uses the stable
+  # lima-<vm> alias and the port is resolved from lima's file each time, so restarts are free.
+  # GUEST_DEV may be "$HOME/dev" for the guest to expand, so ask the guest what it means.
+  local dev; dev=$(guest "echo $GUEST_DEV")
+  git remote remove vm 2>/dev/null || true
+  git remote add vm "lima-$VM:$dev/$project"
+  git config --local core.sshCommand "ssh -F $SSH_CONFIG"
+  git config --local remote.vm.fetch "+refs/heads/*:refs/vm/$project/*"
+  git fetch vm
+  echo "guest branches are under refs/vm/$project/* — merge with: git merge --ff-only refs/vm/$project/<branch>"
+}
+
 case "${1:-status}" in
   --survey) guest_survey ;;
   status)   cmd_status ;;
+  fetch)    shift; cmd_fetch "${1:-}" ;;
   *) echo "usage: $(basename "$0") [status|fetch [project]]" >&2; exit 2 ;;
 esac
