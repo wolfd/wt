@@ -207,6 +207,82 @@ grep -q '^launchctl bootstrap gui/' "$CALL_LOG" \
   && ok "the agent is bootstrapped into the gui domain" \
   || no "no launchctl bootstrap call: $(grep '^launchctl' "$CALL_LOG" || echo '<none>')"
 
+# ---- vm-git.sh ----------------------------------------------------------------------------
+VMGIT="$DIR/../macos/host/vm-git.sh"
+
+# ssh stub: drop "-F <cfg>" and the lima-* host, run the rest locally. Lets the real git run
+# against real temp repos, so the stranded-detection logic is genuinely exercised.
+cat > "$T/bin/ssh" <<'STUB'
+#!/usr/bin/env bash
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -F) shift 2 ;;
+    lima-*) shift; args=("$@"); break ;;
+    *) shift ;;
+  esac
+done
+exec bash -c "${args[*]}"
+STUB
+chmod +x "$T/bin/ssh"
+
+# A guest that mirrors the real 2026-07-16 state: one repo with a stranded commit, one whose
+# branches all live on a remote-tracking ref despite having no upstream (the false-positive trap).
+GD="$T/guest-dev"; mkdir -p "$GD"
+gitq() { git -C "$1" -c user.email=t@t -c user.name=t -c init.defaultBranch=main "${@:2}"; }
+mkdir -p "$GD/stranded"; git init -q -b main "$GD/stranded"
+gitq "$GD/stranded" commit -q --allow-empty -m base
+gitq "$GD/stranded" update-ref refs/remotes/origin/main HEAD
+gitq "$GD/stranded" commit -q --allow-empty -m "vendor bump"
+gitq "$GD/stranded" remote add origin https://example.invalid/stranded
+
+mkdir -p "$GD/safe"; git init -q -b mac-loop "$GD/safe"
+gitq "$GD/safe" commit -q --allow-empty -m base
+gitq "$GD/safe" update-ref refs/remotes/origin/mac-loop HEAD
+gitq "$GD/safe" branch wt/gameplay          # no upstream, but fully on origin/mac-loop
+gitq "$GD/safe" remote add origin https://example.invalid/safe
+
+# NAME=VALUE args go to env (the run_setup convention above); the rest are the script's own
+# argv. `env -i FOO=1 --survey bash x` would treat --survey as the command and die.
+run_vmgit() {
+  local envs=()
+  while [ $# -gt 0 ] && [ "${1#*=}" != "$1" ]; do envs+=("$1"); shift; done
+  env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" \
+      WT_MAC_GUEST_DEV="$GD" LIMACTL_LOG="$LIMACTL_LOG" STATE="$STATE" \
+      ${envs[@]+"${envs[@]}"} bash "$VMGIT" "$@"
+}
+
+echo "== vm-git.sh: preflight names its remedy =="
+mkdir -p "$T/home/.lima/wt"; : > "$T/home/.lima/wt/ssh.config"
+out=$(env -i PATH="/usr/bin:/bin" HOME="$T/home" bash "$VMGIT" 2>&1); rc=$?
+[ "$rc" -ne 0 ] && grep -qi 'nix profile install' <<<"$out" \
+  && ok "vm-git: missing limactl fails and points at nix" \
+  || no "vm-git: missing limactl: rc=$rc out=$out"
+
+rm -f "$T/home/.lima/wt/ssh.config"
+out=$(run_vmgit 2>&1); rc=$?
+[ "$rc" -ne 0 ] && grep -q 'limactl start wt' <<<"$out" \
+  && ok "vm-git: no ssh.config fails and points at 'limactl start wt'" \
+  || no "vm-git: missing ssh.config: rc=$rc out=$out"
+: > "$T/home/.lima/wt/ssh.config"
+
+echo "== vm-git.sh: the survey is one round-trip of TSV =="
+out=$(run_vmgit --survey 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok "vm-git: --survey exits 0" || no "vm-git: --survey rc=$rc: $out"
+# Literal tabs, not grep -P: this host's grep is BSD and has no -P.
+grep -q $'^B\tstranded\tmain\t1\t' <<<"$out" \
+  && ok "vm-git: the stranded repo reports 1 commit off all remotes" \
+  || no "vm-git: expected 'B stranded main 1': $out"
+grep -q $'^B\tsafe\twt/gameplay\t0\t' <<<"$out" \
+  && ok "vm-git: an upstream-less branch already on a remote ref counts 0 (no false positive)" \
+  || no "vm-git: wt/gameplay must be 0, got: $out"
+grep -q $'^U\tsafe\thttps://example.invalid/safe' <<<"$out" \
+  && ok "vm-git: the survey reports each repo's origin URL" \
+  || no "vm-git: missing U row: $out"
+grep -q $'^R\tsafe\torigin/mac-loop\t' <<<"$out" \
+  && ok "vm-git: the survey reports remote-tracking refs for the staleness check" \
+  || no "vm-git: missing R row: $out"
+
 echo
 echo "== results: $PASS passed, $FAIL failed =="
 [ "$FAIL" -eq 0 ]
