@@ -283,6 +283,41 @@ grep -q $'^R\tsafe\torigin/mac-loop\t' <<<"$out" \
   && ok "vm-git: the survey reports remote-tracking refs for the staleness check" \
   || no "vm-git: missing R row: $out"
 
+echo "== vm-git.sh: status =="
+# git ls-remote stub, so the staleness cross-check has a controllable "real" remote.
+cat > "$T/bin/git" <<'STUB'
+#!/usr/bin/env bash
+if [ "$1" = ls-remote ] && [ -n "${LSREMOTE_OUT:-}" ]; then cat "$LSREMOTE_OUT"; exit 0; fi
+exec /usr/bin/git "$@"
+STUB
+chmod +x "$T/bin/git"
+
+safe_sha=$(gitq "$GD/safe" rev-parse HEAD)
+printf '%s\trefs/heads/mac-loop\n' "$safe_sha" > "$T/lsremote.ok"
+
+out=$(run_vmgit LSREMOTE_OUT="$T/lsremote.ok" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok "vm-git: status exits 0 even with stranded work" \
+                || no "vm-git: status rc=$rc: $out"
+grep -q 'stranded' <<<"$out" && grep -q '1 commit' <<<"$out" \
+  && ok "vm-git: status names the stranded repo and its commit count" \
+  || no "vm-git: status missed the stranded repo: $out"
+grep -q 'safe' <<<"$out" \
+  && no "vm-git: status listed a clean repo (must be quiet when clean)" \
+  || ok "vm-git: status stays quiet about clean repos"
+grep -q 'vm-git.sh fetch' <<<"$out" && grep -q 'refs/vm/stranded/main' <<<"$out" \
+  && ok "vm-git: status prints a copy-pasteable fetch/merge recipe" \
+  || no "vm-git: no actionable recipe: $out"
+
+echo "== vm-git.sh: status flags a stale remote-tracking cache =="
+# refs/heads/main, not mac-loop: only a repo with stranded work reaches the staleness check,
+# and that repo is 'stranded', whose cached ref is origin/main. A mac-loop fixture would
+# belong to 'safe', never be looked up, and pass by doing nothing.
+printf '%s\trefs/heads/main\n' 0000000000000000000000000000000000000000 > "$T/lsremote.stale"
+out=$(run_vmgit LSREMOTE_OUT="$T/lsremote.stale" 2>&1)
+grep -qi 'stale' <<<"$out" \
+  && ok "vm-git: a remote whose sha differs from the cache is flagged stale" \
+  || no "vm-git: stale cache not flagged: $out"
+
 echo
 echo "== results: $PASS passed, $FAIL failed =="
 [ "$FAIL" -eq 0 ]

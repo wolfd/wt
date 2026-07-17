@@ -38,5 +38,48 @@ done
 REMOTE
 }
 
-if [ "${1:-}" = "--survey" ]; then guest_survey; exit 0; fi
-guest_survey >/dev/null
+# The cache `--not --remotes` reads is local and can lie, so ask the real remote (we have the
+# credentials here, the guest does not) and say so when they disagree.
+stale_check() {
+  local repo=$1 url=$2 survey=$3
+  [ "$url" = "-" ] && return 0
+  local real; real=$(git ls-remote "$url" 2>/dev/null) || { echo "  (could not reach $url)"; return 0; }
+  awk -v r="$repo" '$1=="R" && $2==r {print $3"\t"$4}' "$survey" | while IFS=$'\t' read -r ref sha; do
+    local want; want=$(awk -v b="refs/heads/${ref#origin/}" '$2==b {print $1}' <<<"$real")
+    # An `if`, not an && chain: a ref the remote doesn't have leaves $want empty, and a
+    # trailing false && chain would fail the while, fail the pipeline, and `set -e` would
+    # kill the report before the return below could save it.
+    if [ -n "$want" ] && [ "$want" != "$sha" ]; then
+      echo "  warning: $ref is stale (guest cache $sha, remote $want) — counts may be wrong"
+    fi
+  done
+  return 0
+}
+
+cmd_status() {
+  local survey="$TMP/survey"
+  guest_survey > "$survey"
+  local found=0
+  while IFS=$'\t' read -r _ repo url; do
+    local rows; rows=$(awk -v r="$repo" '$1=="B" && $2==r && $4>0' "$survey")
+    [ -n "$rows" ] || continue
+    found=1
+    echo "$repo — not on any remote:"
+    while IFS=$'\t' read -r _ _ branch n sha; do
+      echo "  $branch  $n commit$([ "$n" -eq 1 ] || echo s)  (tip $sha)"
+    done <<<"$rows"
+    stale_check "$repo" "$url" "$survey"
+    echo "  cd <your $repo checkout> && $0 fetch $repo"
+    while IFS=$'\t' read -r _ _ branch _ _; do
+      echo "    git merge --ff-only refs/vm/$repo/$branch && git push origin $branch"
+    done <<<"$rows"
+    echo
+  done < <(awk '$1=="U"' "$survey")
+  [ "$found" -eq 1 ] || echo "nothing stranded — every guest commit is on a remote."
+}
+
+case "${1:-status}" in
+  --survey) guest_survey ;;
+  status)   cmd_status ;;
+  *) echo "usage: $(basename "$0") [status|fetch [project]]" >&2; exit 2 ;;
+esac
