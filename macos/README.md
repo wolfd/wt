@@ -123,6 +123,39 @@ wt new t1 && wt enter t1
 Forgetting the export makes wt silently operate on the first project — check `wt status`
 when in doubt. wt's sudo re-exec preserves `WT_CONFIG` (explicit `--preserve-env` list).
 
+## Getting work out of the VM
+
+The guest has no git credentials by design — the host pulls instead. Lima mounts are
+host→guest only, so the guest's ZFS-backed `~/dev` can never be exposed as a mount; ssh is
+the path, and it needs no VM restart.
+
+```sh
+macos/host/vm-git.sh                 # what's stranded? (safe to run mid-build)
+cd ~/wherever/boxddd && macos/host/vm-git.sh fetch
+git merge --ff-only refs/vm/boxddd/voxfall-patches
+git push origin voxfall-patches
+```
+
+`fetch` self-configures a `vm` remote in the repo you run it from, so afterwards plain
+`git fetch vm` works without the script. Guest branches land under `refs/vm/<project>/*` and
+never collide with `origin/*`; nothing is merged for you.
+
+*Stranded* means reachable from no remote-tracking ref — not "has no upstream", since wt's
+`wt/*` branches have no upstream yet are usually fully pushed.
+
+**Fallback** when the guest's network is wedged but `/export` still mounts: bundle it out.
+
+```sh
+# guest
+git bundle create /export/outbox/repo.bundle origin/<branch>..<branch>
+# host
+git fetch ~/wt-export/outbox/repo.bundle '<branch>:refs/vm-rescue/<branch>'
+```
+
+**Pushing from inside the guest** (`/host-ssh`) is deliberately not set up: it needs a VM
+restart and puts a plain key file where guest code can read it — agent sockets don't cross
+virtiofs.
+
 ## Gotchas we already paid for
 
 - **Do not point the VM at Xcode's macOS 26.x SDK.** Its `.tbd` stubs list only `x86_64-*` and

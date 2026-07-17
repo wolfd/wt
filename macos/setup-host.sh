@@ -57,3 +57,7 @@ limactl shell "$VM" -- zpool list wt >/dev/null 2>&1 \
 echo
 echo "VM '$VM' is up. Next:"
 echo "  limactl shell $VM -- bash /wt-src/macos/setup-guest.sh"
+echo
+echo "To get work back out (the guest holds no git credentials):"
+echo "  $SELF/host/vm-git.sh          # what's stranded in the VM?"
+echo "  alias wt-vm='$SELF/host/vm-git.sh'   # worth putting in your shell rc"

@@ -354,6 +354,12 @@ out=$(env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" WT_MAC_GUEST_DEV="$GD" \
   && ok "vm-git: fetch outside a git repo fails and says so" \
   || no "vm-git: fetch outside a repo: rc=$rc out=$out"
 
+echo "== setup-host.sh points at vm-git.sh =="
+out=$(run_setup WT_MAC_SDKS="$T/sdks" 2>&1)
+grep -q 'vm-git.sh' <<<"$out" \
+  && ok "setup-host closes by naming vm-git.sh (how work gets back out)" \
+  || no "setup-host never mentions vm-git.sh: $out"
+
 echo
 echo "== results: $PASS passed, $FAIL failed =="
 [ "$FAIL" -eq 0 ]
