@@ -32,7 +32,19 @@ provision:
         apt-get update
         apt-get install -y zfsutils-linux rsync build-essential pkg-config git python3-pip curl
       }
+      # ZFS x hardened-usercopy crash workaround. This kernel ships CONFIG_HARDENED_USERCOPY_
+      # DEFAULT_ON; a large zfs_read that copies from a vmalloc'd SCATTER abd trips
+      # usercopy_abort ("kernel BUG at mm/usercopy.c") and oopses the reading thread — hit by
+      # ld/cargo during big (Bevy-scale) links. The dead thread holds ZFS locks, so every later
+      # mount/umount of that dataset then wedges in uninterruptible (D) sleep and `wt enter`/exit
+      # hang forever. Forcing LINEAR (kmalloc'd) abds keeps the copy inside a hardened-usercopy-
+      # verifiable object, so the BUG can't fire. (hardened_usercopy=off on the kernel cmdline is
+      # the other cure, but lima-vz boots its own cmdline and ignores the guest grub.cfg, so this
+      # module option is the reliable knob.)
+      printf 'options zfs zfs_abd_scatter_enabled=0\n' > /etc/modprobe.d/zfs-usercopy.conf
       modprobe zfs
+      # If zfs was already loaded, the modprobe above was a no-op — re-apply live.
+      echo 0 > /sys/module/zfs/parameters/zfs_abd_scatter_enabled 2>/dev/null || true
       # SDK injection, idempotent on every boot. -L flattens symlinks, and Ruby.framework's
       # are self-referential — without the exclude, rsync loops until it dies. /host-sdks must
       # be the CLT SDKs dir: the 26.x Xcode SDK's .tbd stubs dropped plain arm64-macos
