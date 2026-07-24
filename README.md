@@ -105,6 +105,36 @@ from its environment. Do not hand it to someone you would not hand root to, and 
 "narrow" NOPASSWD sudoers rule for it believing that contains it: whoever can invoke it chooses
 what root mounts and what root deletes. Gate who may run `wt` at all, not what it does once run.
 
+## Backends: ZFS (default) or btrfs
+
+The warm-sandbox trick needs one primitive: an instant, writable, copy-on-write snapshot. ZFS
+provides it via `snapshot`+`clone`; **btrfs** provides it via `btrfs subvolume snapshot`. Set
+`WT_BACKEND=btrfs` to use it on a host that has no ZFS (e.g. an immutable Fedora/Bazzite host,
+where ZFS is a CDDL out-of-tree module you can't easily add). The zfs path is unchanged and stays
+the default; everything above — the same-path overlay, the hooks, `gc`, the flock — works
+identically. See [`wt.conf.example`](wt.conf.example) and `host-btrfs-setup.sh`.
+
+Two things are genuinely different on btrfs, both forced by btrfs itself:
+
+**It runs from inside your build container, and hops to the host for storage.** btrfs subvolume
+create/delete need real root on the host (an unprivileged container's user namespace doesn't own
+the host filesystem), while the per-session overlay mount only needs container-root. So `wt new` /
+`wt rm` shell out to the host via `distrobox-host-exec sudo btrfs subvolume …`, and `wt enter` does
+its private-namespace overlay natively in the box — which is exactly where your toolchain lives.
+The source checkout (`WT_CANONICAL`) must be a btrfs **subvolume**; `host-btrfs-setup.sh` converts
+it and creates the sandbox-subvolume parent.
+
+> [!WARNING]
+> **btrfs needs a passwordless (NOPASSWD) sudoers rule, and that's a real rough edge.**
+> btrfs has no `zfs allow` delegation, so there is no way to let an unprivileged user snapshot or
+> delete a subvolume except by granting it root for those commands. `host-btrfs-setup.sh` installs
+> a sudoers rule scoped as tightly as it can — **one user, exactly `btrfs subvolume snapshot|delete`,
+> restricted to the sandbox parent path** — but it *is* a standing passwordless-root grant, and any
+> process running as that user can create or delete subvolumes under that parent. The setup script
+> prints the exact rule and makes you confirm before installing it. This is narrower than, and
+> separate from, the general "don't write a NOPASSWD rule for `wt-setup.sh`" warning above (that one
+> still stands — it's about the mount path, which even on btrfs stays plain in-container sudo).
+
 ## Editor over SSH, with no listening port
 
 `wt-ssh` runs on your machine, not in the container, and hands your editor an SSH session
@@ -140,6 +170,7 @@ so the destroy can proceed. The flock protects sessions, not stragglers.)
 ```sh
 test/test-config-unit.sh    # config resolution (env > file > default) + the shared derivations
 test/test-gc-unit.sh        # snapshot provenance: gc reaps only what wt created
+test/test-backend-unit.sh   # btrfs backend: dispatch, disjointness guard, gc filter, esc hop
 test/test-newrm-unit.sh     # wt new / wt rm: the create and destroy paths
 test/test-hooks-unit.sh     # the hook contract, incl. the exit-code gate
 test/test-marker-unit.sh    # session liveness + locking (a flock, not a pidfile)

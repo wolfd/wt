@@ -98,6 +98,15 @@ export PATH="${WT_PATH:-$PATH}"
 : "${WT_CANONICAL:?}" "${WT_SRC_CLONE:?}" "${WT_META:?}"
 : "${WT_GIT_HOLD:?}" "${WT_GIT_REAL:?}" "${WT_HOLD_DIR:?}"
 
+# setpriv (WT_DROP_PRIV) swaps uid/gid but not HOME, and sudo set HOME to root's — so without this
+# the sandbox shell, git and toolchains (cargo/rustup, ~/.gitconfig, ~/.bashrc) would look under
+# /root and be denied. Point HOME at the target user's home: their real ~/.cargo and ~/.rustup are
+# shared across sandboxes on purpose (registry + toolchains are read-mostly), while only the build
+# tree under WT_CANONICAL is per-sandbox. The enter hook, running after this, may still override it.
+# Fall back to the checkout for an unmapped, passwd-less container-only uid.
+_target_home=$(getent passwd "$WT_TARGET_UID" 2>/dev/null | cut -d: -f6)
+export HOME=${_target_home:-$WT_CANONICAL}
+
 # Pre-shadow binds, while paths still resolve to main's host view — the clone is not mounted yet.
 # Once it is, these hold paths are what keep main's live .git and the never-snapshotted subpaths
 # reachable from inside the namespace.
@@ -112,11 +121,20 @@ done
 # build artifacts still resolve. Private propagation keeps it invisible outside this namespace.
 # The clone is read-write (CoW from its origin snapshot), so every sandbox write — source edits
 # and build outputs alike — lands in the clone, and main is untouched.
-mount -t zfs "$WT_SRC_CLONE" "$WT_CANONICAL"
+#
+# zfs: WT_SRC_CLONE is a dataset, mounted with the zfs type. btrfs: WT_SRC_CLONE is the sandbox
+# subvolume's path, bind-mounted over the canonical path (this ns only). For btrfs this runs as
+# box-root inside the distrobox — bind mounts are allowed in the container's userns — while the
+# subvol itself was created on the host; see wt's WT_BTRFS_ESC. Everything below is identical.
+case "${WT_BACKEND:-zfs}" in
+  btrfs) mount --bind "$WT_SRC_CLONE" "$WT_CANONICAL" ;;
+  *)     mount -t zfs  "$WT_SRC_CLONE" "$WT_CANONICAL" ;;
+esac
 
-# Restore the excluded subpaths to main's live view. Inside the clone they are empty
-# child-dataset mountpoints — the children were never snapshotted, so none of their data is
-# there. Binding the canonical copy back over them gives every sandbox ONE shared live copy.
+# Restore the excluded subpaths to main's live view. Inside the clone they are empty stubs — zfs
+# child-dataset mountpoints or btrfs nested-subvolume placeholders, neither snapshotted, so none
+# of their data is there. Binding the canonical copy back over them gives every sandbox ONE shared
+# live copy.
 for sub in ${WT_SNAPSHOT_EXCLUDE:-}; do
   mount --bind "$WT_HOLD_DIR/$(exclude_key "$sub")" "$WT_CANONICAL/$sub"
 done

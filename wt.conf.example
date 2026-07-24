@@ -25,11 +25,41 @@
 # run host-zfs-setup.sh on the host, pass the host path to it as an argument.
 WT_CANONICAL=/workspaces/myrepo
 
+# ---- storage backend ----------------------------------------------------------------------
+# 'zfs' (default) or 'btrfs'. Pick ONE; each needs its own vars below.
+#   zfs   — snapshot+clone of WT_DS_SRC into WT_DS_PARENT (this section's defaults).
+#   btrfs — writable `btrfs subvolume snapshot` of WT_CANONICAL into WT_BTRFS_PARENT. For hosts
+#           without ZFS. See the btrfs block further down and host-btrfs-setup.sh.
+#WT_BACKEND=zfs
+
+# --- zfs backend (WT_BACKEND=zfs) ---
 # The ZFS dataset holding that checkout, and the dataset the per-sandbox clones hang under.
 # Both are created by host-zfs-setup.sh. WT_DS_PARENT must not live under WT_DS_SRC: `wt gc`
 # destroys children of WT_DS_PARENT, and inside WT_DS_SRC those children are your live data.
 WT_DS_SRC=rpool/data/myrepo-src
 WT_DS_PARENT=rpool/data/myrepo-wt
+
+# --- btrfs backend (WT_BACKEND=btrfs) ---
+# The source is WT_CANONICAL itself, which MUST be a btrfs subvolume (btrfs can only snapshot
+# subvolumes, not plain directories). host-btrfs-setup.sh converts it and creates WT_BTRFS_PARENT,
+# the directory the per-sandbox subvolumes hang under. Same disjointness rule as zfs: WT_BTRFS_PARENT
+# must not be, or live under, WT_CANONICAL (and vice-versa), and both must be on the SAME btrfs fs.
+#WT_BTRFS_PARENT=/var/home/me/.local/share/wt-subvols
+#
+# ┌─ SECURITY ROUGH EDGE — READ THIS ───────────────────────────────────────────────────────────┐
+# │ btrfs has no `zfs allow` delegation, so `btrfs subvolume snapshot|delete` need REAL root.     │
+# │ host-btrfs-setup.sh installs a **passwordless (NOPASSWD) sudoers rule** so `wt new`/`wt rm`   │
+# │ can run them unattended. It is scoped as tightly as possible — one user, exactly the two      │
+# │ `btrfs subvolume snapshot|delete` verbs, restricted to WT_BTRFS_PARENT — but it IS a standing │
+# │ passwordless-root grant. Review the rule host-btrfs-setup.sh prints before accepting it. Any  │
+# │ process that can invoke btrfs as that user can create/delete subvolumes under the parent.     │
+# └──────────────────────────────────────────────────────────────────────────────────────────────┘
+#
+# WT_BTRFS_ESC — the privilege prefix wt puts in front of those two btrfs verbs. Auto-detected:
+#   inside a container → 'distrobox-host-exec sudo' (hop to the host, then the NOPASSWD rule);
+#   on the host        → 'sudo'.
+# Set it to '' (empty) to run btrfs directly — correct only when wt itself already runs as root.
+#WT_BTRFS_ESC=distrobox-host-exec sudo
 
 # ---- sandbox state ------------------------------------------------------------------------
 # Where wt keeps trees/, meta/, active/ and locks/. It must be on the HOST side — outside every
@@ -44,11 +74,18 @@ WT_DS_PARENT=rpool/data/myrepo-wt
 # — huge, churny, or shared-by-design directories (logs, datasets, caches you want to stay
 # common across sandboxes).
 #
-# The mechanism: host-zfs-setup.sh makes each entry its own ZFS child dataset
+# The mechanism (zfs): host-zfs-setup.sh makes each entry its own ZFS child dataset
 # ($WT_DS_SRC/<sub>). `wt new` snapshots WT_DS_SRC NON-recursively, so a child dataset is simply
 # not in the snapshot — and therefore not in the clone, where it appears as an empty mountpoint
 # directory. wt-setup.sh then bind-mounts the canonical copy back over that empty directory, so
 # every sandbox sees ONE live shared copy on the host, and no sandbox pays to duplicate it.
+#
+# The mechanism (btrfs): identical shape — host-btrfs-setup.sh makes each entry a NESTED subvolume
+# under WT_CANONICAL. btrfs snapshots are also non-recursive, so a nested subvolume snapshots as an
+# empty stub directory, and wt-setup.sh binds the canonical copy back over it the same way.
+#
+# NOTE: build outputs (target/, node_modules/, …) should NOT be excluded — they ride along in the
+# CoW snapshot, which is the whole point: each sandbox gets its own warm, isolated build cache.
 #
 # Consequences worth knowing before you add one:
 #   * it is shared, not copied — a sandbox writing there writes the real thing, for everyone;
