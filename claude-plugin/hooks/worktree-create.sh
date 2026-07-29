@@ -85,8 +85,10 @@ if [ -n "$canonical" ] && [ -n "$parent" ] && same_dir "$repo_root" "$canonical"
 fi
 
 # ---- plain git worktree fallback ----------------------------------------------------------
-# Outside the repo, so Claude Code's ancestry screen accepts it, and keyed by repo so two repos
-# can both have a worktree of the same name.
+# Kept outside the repo by choice, not by requirement — Claude Code's own default lives at
+# <repo>/.claude/worktrees/<name>, so inside would be accepted too. Out-of-tree keeps an agent's
+# worktree from ever surfacing in the project's own git status. Keyed by repo, so two repos can
+# both hold a worktree of the same name.
 if [ -n "$canonical" ]; then
   log "$repo_root is not wt's canonical checkout ($canonical) — using a plain git worktree"
 else
