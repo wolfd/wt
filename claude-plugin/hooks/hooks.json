@@ -1,0 +1,25 @@
+{
+  "description": "Routes Claude Code's worktree isolation through wt. WorktreeCreate returns the sandbox clone for the wt-managed checkout and falls back to a plain git worktree everywhere else; WorktreeRemove tears down whichever kind it created.",
+  "hooks": {
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/worktree-create.sh\""
+          }
+        ]
+      }
+    ],
+    "WorktreeRemove": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/worktree-remove.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "wolfd-wt",
+  "description": "The wt sandbox tooling, packaged for Claude Code: worktree isolation backed by CoW clones, plus the invariants for working inside one.",
+  "owner": {
+    "name": "Danny Wolf"
+  },
+  "plugins": [
+    {
+      "name": "wt",
+      "description": "Backs Claude Code worktree isolation with wt CoW sandboxes, so an isolated agent gets a warm build tree instead of a cold checkout, and teaches the invariants for working inside one.",
+      "category": "development",
+      "source": "./claude-plugin"
+    }
+  ]
+}

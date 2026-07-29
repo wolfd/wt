@@ -1,0 +1,7 @@
+{
+  "name": "wt",
+  "description": "Backs Claude Code worktree isolation with wt CoW sandboxes, so an isolated agent gets a warm build tree instead of a cold checkout, and teaches the invariants for working inside one.",
+  "author": {
+    "name": "Danny Wolf"
+  }
+}
