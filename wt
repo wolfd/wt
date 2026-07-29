@@ -688,6 +688,24 @@ wt_new() {
   printf 'gitdir: %s/worktrees/%s\n' "$WT_GIT_HOLD" "$name" > "$meta/dot_git"
   printf '%s/.git\n'                 "$WT_CANONICAL" > "$meta/gitdir_backptr"
 
+  # Install the pointer now rather than leaving it to wt-setup.sh on first enter. The snapshot's
+  # copy of .git is inert only *inside* the namespace, where setup replaces it; the clone is also
+  # browsable on the host at $_be_clone, and there that copy is a live repo still on the source
+  # branch. Commits made against it land in the copied object store and are destroyed by the first
+  # `wt enter`, which swaps .git out — the files survive as a working-tree diff, the history does
+  # not. Swapping at creation makes host-side git fail loudly ("not a git repository") instead.
+  # wt-setup.sh stays correct: its rm is guarded on .git being a directory and its cp -f is
+  # unconditional, so first enter just rewrites the same pointer.
+  #
+  # Guarded on the copy actually being there, which is precisely the condition that makes it
+  # reachable: the btrfs clone is a directory on the host, so the swap runs; the zfs clone is a
+  # dataset name (and is created legacy+noauto, mounted only inside the namespace), so there is
+  # no host-visible .git to neutralize and nothing to do.
+  if [ -d "$_be_clone/.git" ]; then
+    rm -rf "$_be_clone/.git"
+    cp -f "$meta/dot_git" "$_be_clone/.git"
+  fi
+
   log "created sandbox '$name' (branch wt/$name @ $ref_sha, clone $_be_clone)"
 }
 
