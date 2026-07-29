@@ -38,7 +38,7 @@
 #
 # Sandbox commands (in a devcontainer install, run these inside the container):
 #   wt new   <name> [ref]         snapshot+clone main's tree, register git worktree pointer
-#   wt enter <name> [-- cmd...]   enter the sandbox (default: bash)
+#   wt enter [name] [-- cmd...]   enter the sandbox (default: bash); name inferred from cwd
 #   wt list                       list sandboxes + the bytes each clone alone is holding down
 #   wt rm    <name>               clone+snapshot destroyed; branch archived to wt-archive/<name>
 #   wt gc                         reclaim orphan snapshots/clones whose sandbox is gone
@@ -297,6 +297,27 @@ kill_clone_holders() {
 
 tree=""; meta=""
 set_paths() { tree=$WT_HOME/trees/$1; meta=$WT_HOME/meta/$1; }
+
+# The sandbox implied by where you are, so `wt enter -- cmd` needs no name. Inside a session
+# WT_SANDBOX is authoritative. Outside one, the caller may be sitting in the clone on the host
+# (agent harnesses hand out that path, since it is the only host-visible spelling of the tree),
+# so walk up looking for a directory some sandbox records as its clone. Matching the recorded
+# clone rather than just the basename keeps a same-named directory elsewhere from resolving.
+# Requires require_config to have run. Backend note: the btrfs clone is recorded as a path, so
+# this resolves; the zfs clone is recorded as a dataset name and never matches, leaving zfs
+# callers to name the sandbox explicitly.
+infer_sandbox() {
+  if [ -n "${WT_SANDBOX:-}" ]; then printf '%s\n' "$WT_SANDBOX"; return 0; fi
+  local d n recorded
+  d=$(pwd -P 2>/dev/null) || return 1
+  while [ -n "$d" ] && [ "$d" != / ]; do
+    n=$(basename "$d")
+    recorded=$(cat "$WT_HOME/meta/$n/clone" 2>/dev/null || true)
+    if [ -n "$recorded" ] && [ "$recorded" = "$d" ]; then printf '%s\n' "$n"; return 0; fi
+    d=$(dirname "$d")
+  done
+  return 1
+}
 
 git_common_dir_abs() { ( cd "$WT_CANONICAL" && realpath "$(git rev-parse --git-common-dir)" ); }
 
@@ -710,8 +731,15 @@ wt_new() {
 }
 
 wt_enter() {
-  local name=${1:?usage: wt enter <name> [-- cmd...]}; shift || true
-  require_config; validate_name "$name"; set_paths "$name"
+  require_config
+  local name
+  if [ $# -eq 0 ] || [ "${1:-}" = -- ]; then
+    name=$(infer_sandbox) \
+      || die "usage: wt enter [<name>] [-- cmd...] — no name given and $(pwd -P) is not inside a sandbox clone"
+  else
+    name=$1; shift
+  fi
+  validate_name "$name"; set_paths "$name"
   [ "${1:-}" = -- ] && shift || true
 
   local -a cmd=( "$@" ); [ ${#cmd[@]} -eq 0 ] && cmd=( bash )
