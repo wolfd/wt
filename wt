@@ -648,6 +648,28 @@ _be_btrfs_status() {
 # ---- subcommands ------------------------------------------------------------------------
 wt_new() {
   local name=${1:?usage: wt new <name> [ref]} ref=${2:-HEAD}
+
+  # Inside a sandbox WT_CANONICAL is that sandbox's clone — but be_create snapshots host-side
+  # (btrfs escalates to real root, zfs works on datasets), and on the host that same path is
+  # MAIN. A nested `wt new` therefore reports success while cloning main rather than the tree
+  # you are standing in: the new sandbox silently lacks every change the outer one holds.
+  # Refuse rather than clone the wrong source.
+  #
+  # TODO: forking a sandbox — cloning the tree you are standing in — is a real feature, and the
+  # git side already lands correctly: worktree registration goes through the namespace's bind
+  # mount to main's live .git, and $ref/HEAD resolve to the OUTER SANDBOX's commit, so the new
+  # branch would base itself correctly. Only be_create reads the wrong source. On btrfs the fix
+  # is to snapshot $WT_SRC_CLONE (exported by wt_enter, and already a host path) instead of
+  # $WT_CANONICAL; there is no clone->origin dependency, so nothing else changes. On zfs it is
+  # not that cheap: cloning a clone makes the child depend on a snapshot of the parent, so
+  # `wt rm <parent>` fails while a child lives and the destroy path needs promote/ordering work
+  # that _be_zfs_destroy does not do today. Doing it on btrfs alone would leave the default
+  # backend with a lifecycle it cannot unwind, so both backends want solving together.
+  [ -z "${WT_SANDBOX:-}" ] || die \
+    "refusing to create a sandbox from inside sandbox '$WT_SANDBOX': the snapshot is taken
+host-side, where the canonical path is main, so this would clone main rather than '$WT_SANDBOX'
+and quietly drop its changes. Run 'wt new $name' from outside the sandbox."
+
   require_config; validate_name "$name"; set_paths "$name"; be_require
 
   mkdir -p "$WT_HOME"/{trees,meta,active}

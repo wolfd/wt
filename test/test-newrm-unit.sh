@@ -196,6 +196,20 @@ wt new alpha >/dev/null 2>&1 \
 wt new ../escape >/dev/null 2>&1 \
   && no "an invalid sandbox name was accepted" || ok "an invalid sandbox name is refused"
 
+# A nested `wt new` used to SUCCEED while cloning the wrong tree: be_create snapshots host-side,
+# where the canonical path is main and not the sandbox the caller is standing in, so the new
+# sandbox silently lacked every change the outer one held. Refusing is the whole fix, so the
+# refusal must also leave nothing half-built behind.
+WT_SANDBOX=outer wt new beta >/dev/null 2>&1 \
+  && no "wt new ran inside a sandbox — it would have cloned main, not 'outer'" \
+  || ok "wt new refuses to run from inside a sandbox"
+[ ! -e "$WT_HOME/trees/beta" ] && [ ! -e "$WT_HOME/meta/beta" ] \
+  && ok "...and left no tree or metadata behind" \
+  || no "the refused 'wt new beta' half-registered a sandbox"
+git -C "$CANON" show-ref --verify --quiet refs/heads/wt/beta \
+  && no "the refused 'wt new beta' created branch wt/beta" \
+  || ok "...and created no sandbox branch"
+
 echo "== wt gc must not reap a sandbox that is being born =="
 # A tagged, clone-less snapshot whose tree exists: precisely the window inside `wt new` between
 # `zfs snapshot` and `zfs clone`. gc must leave it alone. (Regression guard: gc used to reap it,
